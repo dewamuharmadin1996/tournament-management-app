@@ -93,7 +93,7 @@ export function MatchesView({
 
     setIsGenerating(true)
     try {
-      await fetch(`/api/seasons/${seasonId}/matches/reset`, { method: "POST" })
+      await supabase.from("matches").delete().eq("season_id", seasonId)
 
       if (format === "league") {
         // Avoid re-inserting standings; they already exist (unique constraint)

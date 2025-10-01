@@ -36,7 +36,7 @@ export function TournamentsList({ tournaments }: { tournaments: Tournament[] }) 
   const handleDelete = async () => {
     if (!deleteId) return
 
-    await fetch(`/api/tournaments/${deleteId}`, { method: "DELETE" })
+    await supabase.from("tournaments").delete().eq("id", deleteId)
     setDeleteId(null)
     router.refresh()
   }
