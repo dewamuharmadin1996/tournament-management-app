@@ -283,12 +283,12 @@ export function RandomizeTeamsDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="glass-card max-w-2xl">
+      <DialogContent className="glass-card max-w-2xl max-h-[85vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Randomize Teams</DialogTitle>
         </DialogHeader>
 
-        <div className="grid gap-4">
+        <div className="grid gap-4 overflow-y-auto max-h-[70vh] pr-1">
           <div className="grid gap-2">
             <Label htmlFor="search">Search People</Label>
             <Input
