@@ -192,125 +192,103 @@ export function RandomizeTeamsDialog({
     const ids = members.map((m) => m.id).sort()
     return ids.join(",") // empty string for no members
   }
+// helper: build canonical key from an array or Set of ids
+function teamMembersToKey(ids: Iterable<string>) {
+  const arr = Array.from(ids)
+  arr.sort()
+  return arr.join(",") // empty string for no members
+}
 
-  // new: refresh duplicates by exact member set match
-  async function refreshDuplicatesFromBuckets(buckets: Record<number, SelectablePerson[]>) {
-    // gather all member ids used in preview (to minimize DB calls)
-    const allMemberIds = new Set<string>()
-    for (let i = 1; i <= teamCount; i++) {
-      const members = buckets[i] || []
-      members.forEach((m) => allMemberIds.add(m.id))
-    }
+async function refreshDuplicatesFromBuckets(buckets: Record<number, SelectablePerson[]>) {
+  // gather all member ids used in preview (to minimize DB calls)
+  const allMemberIds = new Set<string>()
+  for (let i = 1; i <= teamCount; i++) {
+    const members = buckets[i] || []
+    members.forEach((m) => allMemberIds.add(m.id))
+  }
 
-    if (allMemberIds.size === 0) {
-      setExistingByMembers({})
-      setDuplicateNames([])
-      return
-    }
-
-    // fetch all team_members rows where person_id is in our preview sets
-    const allIdsArray = Array.from(allMemberIds)
-    const { data: tmRows, error: tmError } = await supabase
-      .from("team_members")
-      .select("team_id, person_id")
-      .in("person_id", allIdsArray)
-
-    if (tmError) {
-      console.log("[v1] refreshDuplicatesFromBuckets error (team_members):", tmError.message)
-      setExistingByMembers({})
-      setDuplicateNames([])
-      return
-    }
-
-    // group team_members by team_id
-    const grouped: Record<string, Set<string>> = {}
-    for (const row of tmRows || []) {
-      if (!grouped[row.team_id]) grouped[row.team_id] = new Set()
-      grouped[row.team_id].add(row.person_id)
-    }
-
-    const matchedTeamIds: Record<string, string> = {} // memberKey -> teamId (first match)
-    const matchedTeamNames: Record<string, string> = {} // memberKey -> teamName
-
-    // for each preview bucket, try to find teams that match exactly
-    for (let i = 1; i <= teamCount; i++) {
-      const members = buckets[i] || []
-      if (members.length === 0) continue
-      const memberIds = members.map((m) => m.id).sort()
-      const memberKey = memberIds.join(",")
-      // candidate team ids are those in grouped that have at least all these ids in grouped[team_id]
-      // but we must also ensure the team has no extra members; we'll verify counts next
-      const candidateTeamIds: string[] = []
-      for (const [teamId, setOfIds] of Object.entries(grouped)) {
-        // quick check: all memberIds in setOfIds
-        let allPresent = true
-        for (const id of memberIds) {
-          if (!setOfIds.has(id)) {
-            allPresent = false
-            break
-          }
-        }
-        if (!allPresent) continue
-        // candidate: might be exact, but could still have extra members that weren't part of any preview bucket
-        candidateTeamIds.push(teamId)
-      }
-
-      if (candidateTeamIds.length === 0) continue
-
-      // verify each candidate has exact member count equal to memberIds.length
-      const exactMatches: string[] = []
-      for (const teamId of candidateTeamIds) {
-        // fetch exact count of members for this team
-        const { count, error: countError } = await supabase
-          .from("team_members")
-          .select("*", { count: "exact", head: true })
-          .eq("team_id", teamId)
-        if (countError) {
-          console.log("[v1] error counting members for team", teamId, countError.message)
-          continue
-        }
-        if (count === memberIds.length) {
-          exactMatches.push(teamId)
-        }
-      }
-
-      if (exactMatches.length === 0) continue
-
-      // pick the first exact match (there should normally be only one)
-      const teamToUse = exactMatches[0]
-      matchedTeamIds[memberKey] = teamToUse
-    }
-
-    // if we found any matching team ids, fetch their names
-    const uniqueMatchedTeamIds = Array.from(new Set(Object.values(matchedTeamIds)))
-    if (uniqueMatchedTeamIds.length > 0) {
-      const { data: teamsData, error: teamsError } = await supabase
-        .from("teams")
-        .select("id, name")
-        .in("id", uniqueMatchedTeamIds)
-      if (teamsError) {
-        console.log("[v1] error fetching team names:", teamsError.message)
-      } else {
-        const idToName: Record<string, string> = {}
-        for (const t of teamsData || []) idToName[t.id] = t.name
-        // build existingByMembers and duplicateNames
-        const map: Record<string, { id: string; name: string }> = {}
-        const dups: string[] = []
-        for (const [memberKey, teamId] of Object.entries(matchedTeamIds)) {
-          const name = idToName[teamId] || `Team ${teamId}`
-          map[memberKey] = { id: teamId, name }
-          dups.push(name)
-        }
-        setExistingByMembers(map)
-        setDuplicateNames(dups)
-        return
-      }
-    }
-
-    // no matches
+  if (allMemberIds.size === 0) {
     setExistingByMembers({})
     setDuplicateNames([])
+    return
   }
+
+  // 1) fetch all team_members rows where person_id is in our preview sets
+  const allIdsArray = Array.from(allMemberIds)
+  const { data: tmRows, error: tmError } = await supabase
+    .from("team_members")
+    .select("team_id, person_id")
+    .in("person_id", allIdsArray)
+
+  if (tmError) {
+    console.log("[v2] refreshDuplicatesFromBuckets error (team_members):", tmError.message)
+    setExistingByMembers({})
+    setDuplicateNames([])
+    return
+  }
+
+  // 2) group fetched rows by team_id and build canonical key per team
+  const grouped: Record<string, Set<string>> = {}
+  for (const row of tmRows || []) {
+    if (!grouped[row.team_id]) grouped[row.team_id] = new Set()
+    grouped[row.team_id].add(row.person_id)
+  }
+
+  // build mapping teamId -> canonicalKey (sorted ids joined)
+  const teamIdToKey: Record<string, string> = {}
+  for (const [teamId, idSet] of Object.entries(grouped)) {
+    teamIdToKey[teamId] = teamMembersToKey(idSet)
+  }
+
+  // 3) for each preview bucket compute its canonical key and look for exact team key match
+  const matchedTeamIds: Record<string, string> = {} // memberKey -> teamId (first match)
+  for (let i = 1; i <= teamCount; i++) {
+    const members = buckets[i] || []
+    if (members.length === 0) continue
+    const memberIds = members.map((m) => m.id)
+    const memberKey = teamMembersToKey(memberIds)
+
+    // find any teamId whose teamIdToKey equals memberKey
+    const foundTeamId = Object.entries(teamIdToKey).find(([, teamKey]) => teamKey === memberKey)?.[0]
+    if (foundTeamId) {
+      matchedTeamIds[memberKey] = foundTeamId
+    }
+  }
+
+  // 4) fetch matched team names, if any, and set state
+  const uniqueMatchedTeamIds = Array.from(new Set(Object.values(matchedTeamIds)))
+  if (uniqueMatchedTeamIds.length > 0) {
+    const { data: teamsData, error: teamsError } = await supabase
+      .from("teams")
+      .select("id, name")
+      .in("id", uniqueMatchedTeamIds)
+    if (teamsError) {
+      console.log("[v2] error fetching team names:", teamsError.message)
+      setExistingByMembers({})
+      setDuplicateNames([])
+      return
+    }
+
+    const idToName: Record<string, string> = {}
+    for (const t of teamsData || []) idToName[t.id] = t.name
+
+    const map: Record<string, { id: string; name: string }> = {}
+    const dups: string[] = []
+    for (const [memberKey, teamId] of Object.entries(matchedTeamIds)) {
+      const name = idToName[teamId] || `Team ${teamId}`
+      map[memberKey] = { id: teamId, name }
+      dups.push(name)
+    }
+    setExistingByMembers(map)
+    setDuplicateNames(dups)
+    return
+  }
+
+  // no matches
+  setExistingByMembers({})
+  setDuplicateNames([])
+}
+
 
   function handleGeneratePreview() {
     const selected = people.filter((p) => p.selected)
