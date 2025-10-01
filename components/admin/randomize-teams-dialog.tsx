@@ -41,7 +41,9 @@ export function RandomizeTeamsDialog({
   const [teamCount, setTeamCount] = useState(2)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [preview, setPreview] = useState<Record<number, SelectablePerson[]>>({})
-  const [existingByName, setExistingByName] = useState<Record<string, string>>({})
+  // mapping from memberKey (sorted ids joined) => { id: teamId, name: teamName }
+  const [existingByMembers, setExistingByMembers] = useState<Record<string, { id: string; name: string }>>({})
+  // duplicateNames remains for UI; now it contains existing team names that matched exact member sets
   const [duplicateNames, setDuplicateNames] = useState<string[]>([])
 
   // Load all people when dialog opens
@@ -173,7 +175,7 @@ export function RandomizeTeamsDialog({
 
   function clearPreview() {
     setPreview({})
-    setExistingByName({})
+    setExistingByMembers({})
     setDuplicateNames([])
   }
 
@@ -183,36 +185,138 @@ export function RandomizeTeamsDialog({
     return members.length > 0 ? members.map((m) => m.name).join(" - ") : `Team ${idx}`
   }
 
+  // produce canonical key for a bucket: sorted person ids joined with comma
+  function computeMembersKey(idx: number, buckets?: Record<number, SelectablePerson[]>) {
+    const source = buckets ?? preview
+    const members = source[idx] || []
+    const ids = members.map((m) => m.id).sort()
+    return ids.join(",") // empty string for no members
+  }
+
+  // new: refresh duplicates by exact member set match
   async function refreshDuplicatesFromBuckets(buckets: Record<number, SelectablePerson[]>) {
-    const names = Array.from({ length: teamCount }, (_, i) => computePreviewName(i + 1, buckets))
-    const nonEmptyNames = names.filter((n) => n && n.trim().length > 0)
-    if (nonEmptyNames.length === 0) {
-      setExistingByName({})
+    // gather all member ids used in preview (to minimize DB calls)
+    const allMemberIds = new Set<string>()
+    for (let i = 1; i <= teamCount; i++) {
+      const members = buckets[i] || []
+      members.forEach((m) => allMemberIds.add(m.id))
+    }
+
+    if (allMemberIds.size === 0) {
+      setExistingByMembers({})
       setDuplicateNames([])
       return
     }
-    const { data, error } = await supabase.from("teams").select("id, name").in("name", nonEmptyNames)
-    if (error) {
-      console.log("[v0] refreshDuplicatesFromBuckets error:", error.message)
-      setExistingByName({})
+
+    // fetch all team_members rows where person_id is in our preview sets
+    const allIdsArray = Array.from(allMemberIds)
+    const { data: tmRows, error: tmError } = await supabase
+      .from("team_members")
+      .select("team_id, person_id")
+      .in("person_id", allIdsArray)
+
+    if (tmError) {
+      console.log("[v1] refreshDuplicatesFromBuckets error (team_members):", tmError.message)
+      setExistingByMembers({})
       setDuplicateNames([])
       return
     }
-    const map: Record<string, string> = {}
-    const dups: string[] = []
-    for (const row of data || []) {
-      map[row.name] = row.id
-      dups.push(row.name)
+
+    // group team_members by team_id
+    const grouped: Record<string, Set<string>> = {}
+    for (const row of tmRows || []) {
+      if (!grouped[row.team_id]) grouped[row.team_id] = new Set()
+      grouped[row.team_id].add(row.person_id)
     }
-    setExistingByName(map)
-    setDuplicateNames(dups)
+
+    const matchedTeamIds: Record<string, string> = {} // memberKey -> teamId (first match)
+    const matchedTeamNames: Record<string, string> = {} // memberKey -> teamName
+
+    // for each preview bucket, try to find teams that match exactly
+    for (let i = 1; i <= teamCount; i++) {
+      const members = buckets[i] || []
+      if (members.length === 0) continue
+      const memberIds = members.map((m) => m.id).sort()
+      const memberKey = memberIds.join(",")
+      // candidate team ids are those in grouped that have at least all these ids in grouped[team_id]
+      // but we must also ensure the team has no extra members; we'll verify counts next
+      const candidateTeamIds: string[] = []
+      for (const [teamId, setOfIds] of Object.entries(grouped)) {
+        // quick check: all memberIds in setOfIds
+        let allPresent = true
+        for (const id of memberIds) {
+          if (!setOfIds.has(id)) {
+            allPresent = false
+            break
+          }
+        }
+        if (!allPresent) continue
+        // candidate: might be exact, but could still have extra members that weren't part of any preview bucket
+        candidateTeamIds.push(teamId)
+      }
+
+      if (candidateTeamIds.length === 0) continue
+
+      // verify each candidate has exact member count equal to memberIds.length
+      const exactMatches: string[] = []
+      for (const teamId of candidateTeamIds) {
+        // fetch exact count of members for this team
+        const { count, error: countError } = await supabase
+          .from("team_members")
+          .select("*", { count: "exact", head: true })
+          .eq("team_id", teamId)
+        if (countError) {
+          console.log("[v1] error counting members for team", teamId, countError.message)
+          continue
+        }
+        if (count === memberIds.length) {
+          exactMatches.push(teamId)
+        }
+      }
+
+      if (exactMatches.length === 0) continue
+
+      // pick the first exact match (there should normally be only one)
+      const teamToUse = exactMatches[0]
+      matchedTeamIds[memberKey] = teamToUse
+    }
+
+    // if we found any matching team ids, fetch their names
+    const uniqueMatchedTeamIds = Array.from(new Set(Object.values(matchedTeamIds)))
+    if (uniqueMatchedTeamIds.length > 0) {
+      const { data: teamsData, error: teamsError } = await supabase
+        .from("teams")
+        .select("id, name")
+        .in("id", uniqueMatchedTeamIds)
+      if (teamsError) {
+        console.log("[v1] error fetching team names:", teamsError.message)
+      } else {
+        const idToName: Record<string, string> = {}
+        for (const t of teamsData || []) idToName[t.id] = t.name
+        // build existingByMembers and duplicateNames
+        const map: Record<string, { id: string; name: string }> = {}
+        const dups: string[] = []
+        for (const [memberKey, teamId] of Object.entries(matchedTeamIds)) {
+          const name = idToName[teamId] || `Team ${teamId}`
+          map[memberKey] = { id: teamId, name }
+          dups.push(name)
+        }
+        setExistingByMembers(map)
+        setDuplicateNames(dups)
+        return
+      }
+    }
+
+    // no matches
+    setExistingByMembers({})
+    setDuplicateNames([])
   }
 
   function handleGeneratePreview() {
     const selected = people.filter((p) => p.selected)
     if (teamCount < 1 || selected.length === 0) {
       setPreview({})
-      setExistingByName({})
+      setExistingByMembers({})
       setDuplicateNames([])
       return
     }
@@ -225,18 +329,36 @@ export function RandomizeTeamsDialog({
     const hasPreview = Object.keys(preview).length > 0
     if (!hasPreview) return
 
+    // build memberKey => index mapping
     const namesByIndex: Record<number, string> = {}
+    const memberKeyByIndex: Record<number, string> = {}
     for (let i = 1; i <= teamCount; i++) {
       namesByIndex[i] = computePreviewName(i)
+      memberKeyByIndex[i] = computeMembersKey(i)
     }
-    const existingNameList = Object.values(namesByIndex).filter((n) => Boolean(existingByName[n]))
-    if (existingNameList.length > 0) {
-      const proceed = window.confirm(
-        `The following team name(s) already exist and will be reused instead of creating new teams:\n\n${existingNameList.join(
-          ", ",
-        )}\n\nContinue?`,
-      )
-      if (!proceed) return
+
+    // which previews correspond to existing teams (by exact members)
+    const existingIndices: number[] = []
+    const toInsertIndices: number[] = []
+    for (let i = 1; i <= teamCount; i++) {
+      const key = memberKeyByIndex[i]
+      if (key && existingByMembers[key]) existingIndices.push(i)
+      else toInsertIndices.push(i)
+    }
+
+    if (existingIndices.length > 0) {
+      // ask confirm listing names of existing teams detected
+      const existingTeamNames = existingIndices
+        .map((idx) => existingByMembers[memberKeyByIndex[idx]]?.name)
+        .filter(Boolean)
+      if (existingTeamNames.length > 0) {
+        const proceed = window.confirm(
+          `The following existing team(s) with the exact same members were found and will be reused:\n\n${existingTeamNames.join(
+            ", ",
+          )}\n\nContinue?`,
+        )
+        if (!proceed) return
+      }
     }
 
     setIsSubmitting(true)
@@ -245,17 +367,10 @@ export function RandomizeTeamsDialog({
         data: { user },
       } = await supabase.auth.getUser()
 
-      const toInsert: number[] = []
-      const toReuse: number[] = []
-      for (let i = 1; i <= teamCount; i++) {
-        const name = namesByIndex[i]
-        if (existingByName[name]) toReuse.push(i)
-        else toInsert.push(i)
-      }
-
+      // create teams for those that don't match any existing by members
       let createdTeams: { id: string; name: string }[] = []
-      if (toInsert.length > 0) {
-        const newTeamsPayload = toInsert.map((i) => ({
+      if (toInsertIndices.length > 0) {
+        const newTeamsPayload = toInsertIndices.map((i) => ({
           name: namesByIndex[i],
           logo_url: null,
           created_by: user?.id,
@@ -268,16 +383,18 @@ export function RandomizeTeamsDialog({
         createdTeams = data || []
       }
 
+      // map index -> team id
       const teamIdByIndex: Record<number, string> = {}
       let createdPtr = 0
-      for (const idx of toInsert) {
+      for (const idx of toInsertIndices) {
         teamIdByIndex[idx] = createdTeams[createdPtr++]?.id
       }
-      for (const idx of toReuse) {
-        const name = namesByIndex[idx]
-        teamIdByIndex[idx] = existingByName[name]
+      for (const idx of existingIndices) {
+        const key = memberKeyByIndex[idx]
+        teamIdByIndex[idx] = existingByMembers[key].id
       }
 
+      // upsert season_teams
       const seasonTeamsPayload = Object.keys(teamIdByIndex).map((k) => ({
         season_id: seasonId,
         team_id: teamIdByIndex[Number(k)],
@@ -289,6 +406,7 @@ export function RandomizeTeamsDialog({
         if (seasonTeamsError) throw seasonTeamsError
       }
 
+      // upsert team members using preview buckets (use teamIdByIndex)
       const teamMembersPayload: { team_id: string; person_id: string }[] = []
       for (let i = 1; i <= teamCount; i++) {
         const teamId = teamIdByIndex[i]
@@ -434,8 +552,9 @@ export function RandomizeTeamsDialog({
               {duplicateNames.length > 0 && (
                 <div className="flex items-center justify-between rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm">
                   <span>
-                    Some team name(s) already exist: <span className="font-medium">{duplicateNames.join(", ")}</span>.
-                    They will be reused if you continue.
+                    Some existing team(s) with the exact same members were found:{" "}
+                    <span className="font-medium">{duplicateNames.join(", ")}</span>. They will be reused if you
+                    continue.
                   </span>
                   <Button
                     size="sm"
@@ -452,7 +571,8 @@ export function RandomizeTeamsDialog({
                 {Array.from({ length: teamCount }, (_, i) => i + 1).map((idx) => {
                   const members = preview[idx] || []
                   const name = computePreviewName(idx)
-                  const exists = Boolean(existingByName[name])
+                  const memberKey = computeMembersKey(idx)
+                  const exists = Boolean(memberKey && existingByMembers[memberKey])
                   return (
                     <div
                       key={idx}
