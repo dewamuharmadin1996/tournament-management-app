@@ -24,8 +24,8 @@ export function SeasonTeamsManager({ seasonId, seasonTeams }: { seasonId: string
   const router = useRouter()
   const supabase = createClient()
 
-  const handleRemoveTeam = async (seasonTeamId: string) => {
-    await supabase.from("season_teams").delete().eq("id", seasonTeamId)
+  const handleRemoveTeam = async (teamId: string) => {
+    await fetch(`/api/seasons/${seasonId}/teams/${teamId}`, { method: "DELETE" })
     router.refresh()
   }
 
@@ -67,7 +67,7 @@ export function SeasonTeamsManager({ seasonId, seasonTeams }: { seasonId: string
                     )}
                   </div>
                   <span className="flex-1 font-medium">{st.teams.name}</span>
-                  <Button variant="ghost" size="icon" onClick={() => handleRemoveTeam(st.id)}>
+                  <Button variant="ghost" size="icon" onClick={() => handleRemoveTeam(st.teams.id)}>
                     <X className="h-4 w-4" />
                   </Button>
                 </div>
