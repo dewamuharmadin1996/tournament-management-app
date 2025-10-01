@@ -7,6 +7,7 @@ import { useState } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { useRouter } from "next/navigation"
 import { AddTeamDialog } from "./add-team-dialog"
+import { RandomizeTeamsDialog } from "./randomize-teams-dialog"
 
 interface SeasonTeam {
   id: string
@@ -19,6 +20,7 @@ interface SeasonTeam {
 
 export function SeasonTeamsManager({ seasonId, seasonTeams }: { seasonId: string; seasonTeams: SeasonTeam[] }) {
   const [showAddDialog, setShowAddDialog] = useState(false)
+  const [showRandomizeDialog, setShowRandomizeDialog] = useState(false)
   const router = useRouter()
   const supabase = createClient()
 
@@ -33,10 +35,15 @@ export function SeasonTeamsManager({ seasonId, seasonTeams }: { seasonId: string
         <CardHeader>
           <div className="flex items-center justify-between">
             <CardTitle>Teams in Season</CardTitle>
-            <Button onClick={() => setShowAddDialog(true)} size="sm">
-              <Plus className="mr-2 h-4 w-4" />
-              Add Team
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" onClick={() => setShowRandomizeDialog(true)} size="sm">
+                Randomize Teams
+              </Button>
+              <Button onClick={() => setShowAddDialog(true)} size="sm">
+                <Plus className="mr-2 h-4 w-4" />
+                Add Team
+              </Button>
+            </div>
           </div>
         </CardHeader>
         <CardContent>
@@ -71,6 +78,15 @@ export function SeasonTeamsManager({ seasonId, seasonTeams }: { seasonId: string
       </Card>
 
       <AddTeamDialog open={showAddDialog} onOpenChange={setShowAddDialog} seasonId={seasonId} />
+      <RandomizeTeamsDialog
+        open={showRandomizeDialog}
+        onOpenChange={setShowRandomizeDialog}
+        seasonId={seasonId}
+        onDone={() => {
+          setShowRandomizeDialog(false)
+          router.refresh()
+        }}
+      />
     </>
   )
 }

@@ -1,7 +1,11 @@
+"use client"
+
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { EyeOff } from "lucide-react"
 import Link from "next/link"
+import { useState } from "react"
+import { Button } from "@/components/ui/button"
 
 interface Match {
   id: string
@@ -13,6 +17,7 @@ interface Match {
   status: string
   team1: { id: string; name: string; logo_url: string | null; is_private: boolean } | null
   team2: { id: string; name: string; logo_url: string | null; is_private: boolean } | null
+  scheduled_at?: string | null
 }
 
 export function PublicMatchesView({
@@ -24,7 +29,21 @@ export function PublicMatchesView({
   format: string
   isLoggedIn: boolean
 }) {
-  const groupedMatches = matches.reduce(
+  const [showUpcomingOnly, setShowUpcomingOnly] = useState(false)
+
+  const visibleMatches = showUpcomingOnly ? matches.filter((m) => m.status !== "completed") : matches
+
+  const now = Date.now()
+  const nonCompleted = visibleMatches.filter((m) => m.status !== "completed")
+  const futureWithDates = nonCompleted
+    .filter((m) => !!m.scheduled_at)
+    .sort((a, b) => new Date(a.scheduled_at as string).getTime() - new Date(b.scheduled_at as string).getTime())
+  const nextFuture = futureWithDates.find((m) => new Date(m.scheduled_at as string).getTime() >= now)
+  const fallbackByDate = futureWithDates[0]
+  const fallbackByNumber = nonCompleted.slice().sort((a, b) => a.match_number - b.match_number)[0]
+  const nextMatchId = (nextFuture || fallbackByDate || fallbackByNumber)?.id
+
+  const groupedMatches = visibleMatches.reduce(
     (acc, match) => {
       const key = match.bracket_position || "main"
       if (!acc[key]) acc[key] = {}
@@ -70,8 +89,13 @@ export function PublicMatchesView({
 
   return (
     <Card className="glass-card">
-      <CardHeader>
+      <CardHeader className="flex items-center justify-between">
         <CardTitle>Matches</CardTitle>
+        {matches.length > 0 && (
+          <Button variant="outline" size="sm" onClick={() => setShowUpcomingOnly((v) => !v)}>
+            {showUpcomingOnly ? "Show All" : "Upcoming Only"}
+          </Button>
+        )}
       </CardHeader>
       <CardContent>
         {matches.length === 0 ? (
@@ -88,7 +112,12 @@ export function PublicMatchesView({
                     <h4 className="text-sm font-medium text-muted-foreground mb-3">Round {round}</h4>
                     <div className="grid gap-3 md:grid-cols-2">
                       {roundMatches.map((match) => (
-                        <Card key={match.id} className="bg-card/20 border-border">
+                        <Card
+                          key={match.id}
+                          className={`bg-card/20 border-border ${
+                            match.id === nextMatchId ? "ring-2 ring-primary/60 bg-primary/10" : ""
+                          }`}
+                        >
                           <CardContent className="p-4">
                             <div className="flex items-center justify-between mb-3">
                               <Badge variant={match.status === "completed" ? "secondary" : "outline"}>

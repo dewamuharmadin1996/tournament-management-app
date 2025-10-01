@@ -19,6 +19,8 @@ interface PersonFormProps {
     role: string | null
     avatar_url: string | null
     is_private: boolean
+    email?: string | null
+    whatsapp?: string | null
   }
 }
 
@@ -27,6 +29,8 @@ export function PersonForm({ person }: PersonFormProps) {
   const [role, setRole] = useState(person?.role || "")
   const [avatarUrl, setAvatarUrl] = useState(person?.avatar_url || "")
   const [isPrivate, setIsPrivate] = useState(person?.is_private || false)
+  const [email, setEmail] = useState(person?.email || "")
+  const [whatsapp, setWhatsapp] = useState(person?.whatsapp || "")
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const router = useRouter()
@@ -50,6 +54,8 @@ export function PersonForm({ person }: PersonFormProps) {
         avatar_url: avatarUrl || null,
         is_private: isPrivate,
         created_by: user.id,
+        email: email || null,
+        whatsapp: whatsapp || null,
       }
 
       if (person) {
@@ -94,6 +100,30 @@ export function PersonForm({ person }: PersonFormProps) {
               placeholder="e.g., Player, Coach, Manager"
               className="bg-background/50"
             />
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="email">Email</Label>
+              <Input
+                id="email"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="name@example.com"
+                className="bg-background/50"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="whatsapp">WhatsApp Number</Label>
+              <Input
+                id="whatsapp"
+                value={whatsapp}
+                onChange={(e) => setWhatsapp(e.target.value)}
+                placeholder="+15551234567"
+                className="bg-background/50"
+              />
+            </div>
           </div>
 
           <ImageUpload label="Avatar" value={avatarUrl} onChange={setAvatarUrl} aspectRatio="square" />

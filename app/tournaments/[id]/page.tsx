@@ -6,6 +6,7 @@ import { Calendar } from "lucide-react"
 import Link from "next/link"
 import { Badge } from "@/components/ui/badge"
 import { ChampionBadge } from "@/components/champion-badge"
+import { Podium } from "@/components/podium"
 
 export default async function PublicTournamentPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
@@ -32,6 +33,78 @@ export default async function PublicTournamentPage({ params }: { params: Promise
     .eq("tournament_id", id)
     .order("created_at", { ascending: false })
 
+  const seasonIdsCompleted = (seasons || []).filter((s: any) => s.status === "completed").map((s: any) => s.id)
+
+  async function getTopByOrder(direction: "top" | "bottom") {
+    if (!seasonIdsCompleted.length) return []
+
+    // Fetch all standings sorted DESC, then pick index 0 for "top" and last index for "bottom".
+    const queries = seasonIdsCompleted.map(async (sid) => {
+      const { data: seasonStandings } = await supabase
+        .from("standings")
+        .select("team_id, team:team_id(id, is_private)")
+        .eq("season_id", sid)
+        .order("points", { ascending: false })
+        .order("goal_difference", { ascending: false })
+
+      if (!seasonStandings || seasonStandings.length === 0)
+        return [] as Array<{ id: string; name: string; avatar_url: string | null; is_private: boolean }>
+
+      const standing = direction === "top" ? seasonStandings[0] : seasonStandings[seasonStandings.length - 1]
+
+      if (!standing?.team)
+        return [] as Array<{ id: string; name: string; avatar_url: string | null; is_private: boolean }>
+
+      // Respect team privacy for logged-out users
+      if (!user && standing.team.is_private) return []
+
+      const { data: members } = await supabase
+        .from("team_members")
+        .select("person:person_id(id, name, avatar_url, is_private)")
+        .eq("team_id", standing.team_id)
+
+      const people = (members || []).map((m: any) => m.person).filter(Boolean) as Array<{
+        id: string
+        name: string
+        avatar_url: string | null
+        is_private: boolean
+      }>
+
+      return people
+    })
+
+    const peopleArrays = await Promise.all(queries)
+    const people = peopleArrays.flat()
+
+    const map = new Map<
+      string,
+      { teamId: string; teamName: string; personId: string; count: number; isPrivate: boolean; logoUrl: string | null }
+    >()
+
+    for (const p of people) {
+      if (!p) continue
+      if (!user && p.is_private) continue
+
+      const current = map.get(p.id)
+      if (current) current.count += 1
+      else
+        map.set(p.id, {
+          teamId: p.id,
+          personId: p.id,
+          teamName: p.name,
+          count: 1,
+          isPrivate: !!p.is_private,
+          logoUrl: p.avatar_url || null,
+        })
+    }
+
+    const list = Array.from(map.values())
+    list.sort((a, b) => b.count - a.count || a.teamName.localeCompare(b.teamName))
+    return list.slice(0, 4)
+  }
+
+  const [tourShame, tourFame] = await Promise.all([getTopByOrder("bottom"), getTopByOrder("top")])
+
   const { data: lastCompletedSeason } = await supabase
     .from("seasons")
     .select("id, name")
@@ -39,7 +112,7 @@ export default async function PublicTournamentPage({ params }: { params: Promise
     .eq("status", "completed")
     .order("created_at", { ascending: false })
     .limit(1)
-    .single()
+    .maybeSingle()
 
   let championData = null
   let loserData = null
@@ -49,12 +122,12 @@ export default async function PublicTournamentPage({ params }: { params: Promise
     if (tournament.show_champion) {
       const { data: champion } = await supabase
         .from("standings")
-        .select("*, team:team_id(id, name, is_private)")
+        .select("*, team:team_id(id, name, is_private, logo_url)") // added logo_url
         .eq("season_id", lastCompletedSeason.id)
         .order("points", { ascending: false })
         .order("goal_difference", { ascending: false })
         .limit(1)
-        .single()
+        .maybeSingle()
 
       if (champion) {
         championData = {
@@ -63,6 +136,7 @@ export default async function PublicTournamentPage({ params }: { params: Promise
           isPrivate: champion.team.is_private,
           seasonName: lastCompletedSeason.name,
           seasonId: lastCompletedSeason.id,
+          logoUrl: champion.team.logo_url || null,
         }
       }
     }
@@ -71,12 +145,12 @@ export default async function PublicTournamentPage({ params }: { params: Promise
     if (tournament.show_loser) {
       const { data: loser } = await supabase
         .from("standings")
-        .select("*, team:team_id(id, name, is_private)")
+        .select("*, team:team_id(id, name, is_private, logo_url)") // added logo_url
         .eq("season_id", lastCompletedSeason.id)
         .order("points", { ascending: true })
         .order("goal_difference", { ascending: true })
         .limit(1)
-        .single()
+        .maybeSingle()
 
       if (loser) {
         loserData = {
@@ -85,6 +159,7 @@ export default async function PublicTournamentPage({ params }: { params: Promise
           isPrivate: loser.team.is_private,
           seasonName: lastCompletedSeason.name,
           seasonId: lastCompletedSeason.id,
+          logoUrl: loser.team.logo_url || null,
         }
       }
     }
@@ -162,6 +237,9 @@ export default async function PublicTournamentPage({ params }: { params: Promise
             </div>
           )}
         </div>
+
+        <Podium title="Tournament Hall of Shame" entries={tourShame} accent="shame" />
+        <Podium title="Tournament Hall of Fame" entries={tourFame} accent="fame" />
 
         <div className="mb-6">
           <h2 className="text-2xl font-bold mb-4">Seasons</h2>

@@ -6,6 +6,7 @@ import { PublicMatchesView } from "@/components/public/public-matches-view"
 import { PublicStandingsView } from "@/components/public/public-standings-view"
 import { PublicTeamsView } from "@/components/public/public-teams-view"
 import { ChampionBadge } from "@/components/champion-badge"
+import { SeasonDocs } from "@/components/season-docs"
 
 export default async function PublicSeasonPage({
   params,
@@ -135,6 +136,7 @@ export default async function PublicSeasonPage({
             <TabsTrigger value="matches">Matches</TabsTrigger>
             {season.format === "league" && <TabsTrigger value="standings">Standings</TabsTrigger>}
             <TabsTrigger value="teams">Teams</TabsTrigger>
+            <TabsTrigger value="docs">Docs</TabsTrigger>
           </TabsList>
 
           <TabsContent value="matches">
@@ -149,6 +151,10 @@ export default async function PublicSeasonPage({
 
           <TabsContent value="teams">
             <PublicTeamsView seasonTeams={seasonTeams || []} isLoggedIn={!!user} />
+          </TabsContent>
+
+          <TabsContent value="docs">
+            <SeasonDocs seasonId={seasonId} canEdit={!!user} />
           </TabsContent>
         </Tabs>
       </main>

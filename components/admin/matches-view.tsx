@@ -2,7 +2,7 @@
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Zap } from "lucide-react"
+import { Zap, MessageCircle } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import { useRouter } from "next/navigation"
 import { useState } from "react"
@@ -22,6 +22,7 @@ interface Match {
   team1: { name: string } | null
   team2: { name: string } | null
   winner: { name: string } | null
+  scheduled_at?: string // added scheduled_at field
 }
 
 interface SeasonTeam {
@@ -37,13 +38,24 @@ export function MatchesView({
   matches,
   format,
   seasonTeams,
+  tournamentName,
+  seasonName,
+  hasStandingsPoints = false,
 }: {
   seasonId: string
   matches: Match[]
   format: string
   seasonTeams: SeasonTeam[]
+  tournamentName?: string
+  seasonName?: string
+  hasStandingsPoints?: boolean
 }) {
   const [isGenerating, setIsGenerating] = useState(false)
+  const [showBulkWA, setShowBulkWA] = useState(false) // toggle for bulk WhatsApp panel
+  const [bulkPeople, setBulkPeople] = useState<
+    Array<{ id: string; name: string; whatsapp: string | null; team_id: string }>
+  >([]) // store people with team
+  const [showUpcomingOnly, setShowUpcomingOnly] = useState(false) // toggle to hide completed matches
   const router = useRouter()
   const supabase = createClient()
 
@@ -59,13 +71,49 @@ export function MatchesView({
         await generateDoubleEliminationMatches()
       }
 
+      // ask server to create calendar events for all newly scheduled matches
+      try {
+        await fetch(`/api/seasons/${seasonId}/calendar/sync`, { method: "POST" })
+      } catch (e) {
+        // ignore sync error; UI still updates
+      }
+
       router.refresh()
     } finally {
       setIsGenerating(false)
     }
   }
 
-  const generateLeagueMatches = async () => {
+  const handleRegenerateMatches = async () => {
+    const msg = hasStandingsPoints
+      ? "Standings points have already been updated from completed matches. Regenerating will DELETE all current matches for this season. This does not automatically reset standings. Continue?"
+      : "This will DELETE all current matches for this season and regenerate the schedule. Continue?"
+
+    if (!window.confirm(msg)) return
+
+    setIsGenerating(true)
+    try {
+      await supabase.from("matches").delete().eq("season_id", seasonId)
+
+      if (format === "league") {
+        // Avoid re-inserting standings; they already exist (unique constraint)
+        await generateLeagueMatches(false)
+      } else if (format === "cup") {
+        await generateCupMatches()
+      } else if (format === "double_elimination") {
+        await generateDoubleEliminationMatches()
+      }
+
+      try {
+        await fetch(`/api/seasons/${seasonId}/calendar/sync`, { method: "POST" })
+      } catch {}
+      router.refresh()
+    } finally {
+      setIsGenerating(false)
+    }
+  }
+
+  const generateLeagueMatches = async (insertStandings = true) => {
     const teams = seasonTeams.map((st) => st.teams.id)
     const matchesToCreate = []
 
@@ -85,13 +133,13 @@ export function MatchesView({
 
     await supabase.from("matches").insert(matchesToCreate)
 
-    // Initialize standings
-    const standingsToCreate = teams.map((teamId) => ({
-      season_id: seasonId,
-      team_id: teamId,
-    }))
-
-    await supabase.from("standings").insert(standingsToCreate)
+    if (insertStandings) {
+      const standingsToCreate = teams.map((teamId) => ({
+        season_id: seasonId,
+        team_id: teamId,
+      }))
+      await supabase.from("standings").insert(standingsToCreate)
+    }
   }
 
   const generateCupMatches = async () => {
@@ -141,7 +189,62 @@ export function MatchesView({
     await supabase.from("matches").insert(matchesToCreate)
   }
 
-  const groupedMatches = matches.reduce(
+  const loadBulkPeople = async () => {
+    setShowBulkWA((v) => !v)
+    if (bulkPeople.length || seasonTeams.length === 0) return
+    const teamIds = seasonTeams.map((t) => t.teams.id)
+    // Supabase query for all members across teamIds
+    const { data } = await supabase
+      .from("team_members")
+      .select("team_id, people:person_id(id, name, whatsapp)")
+      .in("team_id", teamIds)
+
+    const list = (data || [])
+      .map((row: any) => ({ team_id: row.team_id, ...row.people }))
+      .filter((p: any) => p && p.id) as Array<{ id: string; name: string; whatsapp: string | null; team_id: string }>
+
+    // Deduplicate by person id (keep first team_id)
+    const seen = new Set<string>()
+    const unique: Array<{ id: string; name: string; whatsapp: string | null; team_id: string }> = []
+    for (const p of list) {
+      if (!seen.has(p.id)) {
+        seen.add(p.id)
+        unique.push(p)
+      }
+    }
+    setBulkPeople(unique)
+  }
+
+  const buildScheduleText = (person: { id: string; name: string; team_id: string }) => {
+    const myTeamId = person.team_id
+    const myMatches = matches.filter((m) => m.team1_id === myTeamId || m.team2_id === myTeamId)
+    const lines = myMatches.map((m) => {
+      const opponentName = m.team1_id === myTeamId ? m.team2?.name || "TBD" : m.team1?.name || "TBD"
+      const when = m["scheduled_at" as keyof typeof m]
+        ? new Date(String(m["scheduled_at" as keyof typeof m])).toLocaleString()
+        : "TBD"
+      return `- ${when}: ${m.team1?.name || "TBD"} vs ${m.team2?.name || "TBD"} (Opp: ${opponentName})`
+    })
+    const headerPrefix = [tournamentName, seasonName].filter(Boolean).join(" - ")
+    const header = headerPrefix
+      ? `Schedule Reminder (${headerPrefix}) for ${person.name}`
+      : `Schedule Reminder for ${person.name}`
+    return `${header}\n${lines.join("\n")}`.trim()
+  }
+
+  const visibleMatches = showUpcomingOnly ? matches.filter((m) => m.status !== "completed") : matches
+
+  const now = Date.now()
+  const nonCompleted = visibleMatches.filter((m) => m.status !== "completed")
+  const futureWithDates = nonCompleted
+    .filter((m) => !!m.scheduled_at)
+    .sort((a, b) => new Date(a.scheduled_at as string).getTime() - new Date(b.scheduled_at as string).getTime())
+  const nextFuture = futureWithDates.find((m) => new Date(m.scheduled_at as string).getTime() >= now)
+  const fallbackByDate = futureWithDates[0]
+  const fallbackByNumber = nonCompleted.slice().sort((a, b) => a.match_number - b.match_number)[0]
+  const nextMatchId = (nextFuture || fallbackByDate || fallbackByNumber)?.id
+
+  const groupedMatches = visibleMatches.reduce(
     (acc, match) => {
       const key = match.bracket_position || "main"
       if (!acc[key]) acc[key] = {}
@@ -157,15 +260,60 @@ export function MatchesView({
       <CardHeader>
         <div className="flex items-center justify-between">
           <CardTitle>Matches</CardTitle>
-          {matches.length === 0 && seasonTeams.length >= 2 && (
-            <Button onClick={handleGenerateMatches} disabled={isGenerating}>
-              <Zap className="mr-2 h-4 w-4" />
-              {isGenerating ? "Generating..." : "Generate Matches"}
-            </Button>
-          )}
+          <div className="flex items-center gap-2">
+            {matches.length > 0 && (
+              <Button variant="outline" onClick={() => setShowUpcomingOnly((v) => !v)}>
+                {showUpcomingOnly ? "Show All" : "Upcoming Only"}
+              </Button>
+            )}
+            {matches.length === 0 && seasonTeams.length >= 2 && (
+              <Button onClick={handleGenerateMatches} disabled={isGenerating}>
+                <Zap className="mr-2 h-4 w-4" />
+                {isGenerating ? "Generating..." : "Generate Matches"}
+              </Button>
+            )}
+            {matches.length > 0 && seasonTeams.length >= 2 && (
+              <Button onClick={handleRegenerateMatches} disabled={isGenerating}>
+                <Zap className="mr-2 h-4 w-4" />
+                {isGenerating ? "Regenerating..." : "Regenerate Matches"}
+              </Button>
+            )}
+            {matches.length > 0 && (
+              <Button variant="outline" onClick={loadBulkPeople}>
+                <MessageCircle className="mr-2 h-4 w-4" />
+                Bulk WhatsApp Reminders
+              </Button>
+            )}
+          </div>
         </div>
       </CardHeader>
       <CardContent>
+        {showBulkWA && (
+          <div className="mb-6 rounded-md border border-border p-4 bg-background/60">
+            <h4 className="font-medium mb-2">Send reminders to players</h4>
+            {bulkPeople.length === 0 ? (
+              <p className="text-sm text-muted-foreground">Loading players or none with WhatsApp saved.</p>
+            ) : (
+              <div className="grid gap-2 md:grid-cols-2">
+                {bulkPeople.map((p) => {
+                  const num = (p.whatsapp || "").replace(/[^\d+]/g, "")
+                  const text = encodeURIComponent(buildScheduleText(p))
+                  const href = num ? `https://wa.me/${encodeURIComponent(num)}?text=${text}` : undefined
+                  return (
+                    <div key={p.id} className="flex items-center justify-between gap-2">
+                      <span className="truncate">{p.name}</span>
+                      <Button asChild size="xs" variant="secondary" disabled={!href}>
+                        <a href={href} target="_blank" rel="noopener noreferrer">
+                          Send
+                        </a>
+                      </Button>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        )}
         {matches.length === 0 ? (
           <div className="text-center py-8 text-muted-foreground">
             <p>
@@ -184,7 +332,13 @@ export function MatchesView({
                     <h4 className="text-sm font-medium text-muted-foreground mb-3">Round {round}</h4>
                     <div className="grid gap-3 md:grid-cols-2">
                       {roundMatches.map((match) => (
-                        <MatchCard key={match.id} match={match} />
+                        <MatchCard
+                          key={match.id}
+                          match={match}
+                          tournamentName={tournamentName}
+                          seasonName={seasonName}
+                          isNextMatch={match.id === nextMatchId}
+                        />
                       ))}
                     </div>
                   </div>

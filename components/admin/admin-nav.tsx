@@ -42,7 +42,10 @@ export function AdminNav({ user }: AdminNavProps) {
       <div className="container mx-auto flex h-16 items-center justify-between px-4">
         <div className="flex items-center gap-8">
           <Link href="/admin">
-            <h1 className="text-xl font-bold">Tournament Manager</h1>
+            <div className="flex items-center gap-2">
+              <img src="/images/tournament-manager-logo.png" alt="" className="h-8 w-8 rounded-md" />
+              <span className="sr-only">Tournament Manager</span>
+            </div>
           </Link>
           <nav className="hidden md:flex items-center gap-1">
             {navItems.map((item) => (

@@ -7,16 +7,16 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Upload, X, Loader2 } from "lucide-react"
 import { useState, useRef } from "react"
-import { put } from "@vercel/blob"
 
 interface ImageUploadProps {
   label: string
   value: string
   onChange: (url: string) => void
   aspectRatio?: "square" | "video" | "auto"
+  uploadPath?: string // optional path to store files under
 }
 
-export function ImageUpload({ label, value, onChange, aspectRatio = "auto" }: ImageUploadProps) {
+export function ImageUpload({ label, value, onChange, aspectRatio = "auto", uploadPath }: ImageUploadProps) {
   const [isUploading, setIsUploading] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -27,11 +27,16 @@ export function ImageUpload({ label, value, onChange, aspectRatio = "auto" }: Im
     setIsUploading(true)
 
     try {
-      const blob = await put(file.name, file, {
-        access: "public",
-      })
+      const form = new FormData()
+      form.append("file", file)
+      if (uploadPath) {
+        form.append("path", `${uploadPath}/${Date.now()}-${file.name}`)
+      }
 
-      onChange(blob.url)
+      const res = await fetch("/api/upload", { method: "POST", body: form })
+      if (!res.ok) throw new Error(`Upload failed: ${res.status}`)
+      const data = (await res.json()) as { url: string }
+      onChange(data.url)
     } catch (error) {
       console.error("[v0] Upload error:", error)
       alert("Failed to upload image. Please try again.")

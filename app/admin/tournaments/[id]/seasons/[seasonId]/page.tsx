@@ -22,6 +22,8 @@ export default async function SeasonDetailPage({
     notFound()
   }
 
+  const { data: tournament } = await supabase.from("tournaments").select("id, name").eq("id", id).single()
+
   const { data: seasonTeams } = await supabase
     .from("season_teams")
     .select("*, teams(*)")
@@ -80,6 +82,9 @@ export default async function SeasonDetailPage({
             matches={matches || []}
             format={season.format}
             seasonTeams={seasonTeams || []}
+            tournamentName={tournament?.name || "Tournament"}
+            seasonName={season.name}
+            hasStandingsPoints={(standings || []).some((s: any) => (s?.points || 0) > 0)}
           />
         </TabsContent>
 

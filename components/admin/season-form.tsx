@@ -27,6 +27,8 @@ interface SeasonFormProps {
     show_loser?: boolean
     champion_label?: string
     loser_label?: string
+    start_date?: string
+    end_date?: string
   }
 }
 
@@ -42,10 +44,24 @@ export function SeasonForm({ tournamentId, season }: SeasonFormProps) {
   const [showLoser, setShowLoser] = useState(season?.show_loser ?? false)
   const [championLabel, setChampionLabel] = useState(season?.champion_label || "Champion")
   const [loserLabel, setLoserLabel] = useState(season?.loser_label || "Last Place")
+  const [startDate, setStartDate] = useState<string>("")
+  const [endDate, setEndDate] = useState<string>("")
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const router = useRouter()
   const supabase = createClient()
+
+  const formatDate = (d: Date) => {
+    const pad = (n: number) => `${n}`.padStart(2, "0")
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+  }
+  const defaultStart = formatDate(new Date())
+  const defaultEnd = formatDate(new Date(Date.now() + 24 * 60 * 60 * 1000))
+
+  useState(() => {
+    setStartDate(season?.["start_date" as any] || defaultStart)
+    setEndDate(season?.["end_date" as any] || defaultEnd)
+  }, [])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -66,6 +82,8 @@ export function SeasonForm({ tournamentId, season }: SeasonFormProps) {
         show_loser: showLoser,
         champion_label: championLabel,
         loser_label: loserLabel,
+        start_date: startDate || null,
+        end_date: endDate || null,
       }
 
       if (season) {
@@ -171,6 +189,29 @@ export function SeasonForm({ tournamentId, season }: SeasonFormProps) {
               </p>
             </div>
           )}
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="start_date">Start Date</Label>
+              <Input
+                id="start_date"
+                type="date"
+                value={startDate}
+                onChange={(e) => setStartDate(e.target.value)}
+                className="bg-background/50"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="end_date">End Date</Label>
+              <Input
+                id="end_date"
+                type="date"
+                value={endDate}
+                onChange={(e) => setEndDate(e.target.value)}
+                className="bg-background/50"
+              />
+            </div>
+          </div>
 
           <div className="space-y-2">
             <Label htmlFor="status">Status</Label>
