@@ -3,6 +3,7 @@ import Link from "next/link"
 import { Trophy, Users, Calendar, Shield } from "lucide-react"
 import { createClient } from "@/lib/supabase/server"
 import { Podium } from "@/components/podium"
+import { ThemeToggle } from "@/components/theme-toggle"
 
 export default async function HomePage() {
   const supabase = await createClient()
@@ -100,6 +101,7 @@ export default async function HomePage() {
             <Link href="/teams">
               <Button variant="ghost">Teams</Button>
             </Link>
+            <ThemeToggle />
             {user ? (
               <Link href="/admin">
                 <Button>My Dashboard</Button>

@@ -72,7 +72,37 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
   const payload = (await req.json()) as UpdatePayload
   console.log("[v0] PUT /api/matches/:id start", { id, payload })
 
-  // Update the match first
+  // Guard: load current match BEFORE update to validate score updates by status
+  let current
+  try {
+    current = await loadMatchContext(supabase, id)
+  } catch (e: any) {
+    console.log("[v0] loadMatchContext error (pre-update)", { id, error: e?.message })
+    return NextResponse.json({ error: e?.message || "Failed to load match" }, { status: 500 })
+  }
+
+  // Normalize legacy status "ongoing" -> "in_progress"
+  if (payload.status === "ongoing") {
+    payload.status = "in_progress"
+  }
+
+  const wantsScoreChange =
+    Object.prototype.hasOwnProperty.call(payload, "team1_score") ||
+    Object.prototype.hasOwnProperty.call(payload, "team2_score")
+
+  // Only allow score updates when match is in progress or being finished/started in same request
+  const nextStatus = payload.status ?? current.status
+  const scoreAllowed = nextStatus === "in_progress" || nextStatus === "completed"
+
+  if (wantsScoreChange && !scoreAllowed) {
+    console.log("[v0] Score update blocked by status", { id, currentStatus: current.status, nextStatus })
+    return NextResponse.json(
+      { error: "Cannot update score unless match is in progress or being finished." },
+      { status: 400 },
+    )
+  }
+
+  // Update the match
   const { data: updated, error: updateErr } = await supabase
     .from("matches")
     .update(payload)

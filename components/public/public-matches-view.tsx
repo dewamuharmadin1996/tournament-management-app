@@ -111,30 +111,42 @@ export function PublicMatchesView({
                   <div key={round} className="mb-6">
                     <h4 className="text-sm font-medium text-muted-foreground mb-3">Round {round}</h4>
                     <div className="grid gap-3 md:grid-cols-2">
-                      {roundMatches.map((match) => (
-                        <Card
-                          key={match.id}
-                          className={`bg-card/20 border-border ${
-                            match.id === nextMatchId ? "ring-2 ring-primary/60 bg-primary/10" : ""
-                          }`}
-                        >
-                          <CardContent className="p-4">
-                            <div className="flex items-center justify-between mb-3">
-                              <Badge variant={match.status === "completed" ? "secondary" : "outline"}>
-                                {match.status}
-                              </Badge>
-                            </div>
-                            <div className="space-y-2">
-                              <div className="flex items-center gap-2">
-                                {renderTeam(match.team1, match.team1_score)}
+                      {roundMatches.map((match) => {
+                        const label =
+                          match.status === "scheduled"
+                            ? "upcoming"
+                            : match.status === "in_progress"
+                              ? "ongoing"
+                              : "finished"
+                        const variant =
+                          match.status === "completed"
+                            ? "secondary"
+                            : match.status === "in_progress"
+                              ? "default"
+                              : "outline"
+                        return (
+                          <Card
+                            key={match.id}
+                            className={`bg-card/20 border-border ${
+                              match.id === nextMatchId ? "ring-2 ring-primary/60 bg-primary/10" : ""
+                            }`}
+                          >
+                            <CardContent className="p-4">
+                              <div className="flex items-center justify-between mb-3">
+                                <Badge variant={variant}>{label}</Badge>
                               </div>
-                              <div className="flex items-center gap-2">
-                                {renderTeam(match.team2, match.team2_score)}
+                              <div className="space-y-2">
+                                <div className="flex items-center gap-2">
+                                  {renderTeam(match.team1, match.team1_score)}
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  {renderTeam(match.team2, match.team2_score)}
+                                </div>
                               </div>
-                            </div>
-                          </CardContent>
-                        </Card>
-                      ))}
+                            </CardContent>
+                          </Card>
+                        )
+                      })}
                     </div>
                   </div>
                 ))}

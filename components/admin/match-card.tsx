@@ -54,6 +54,12 @@ export function MatchCard({
   const [showWaList, setShowWaList] = useState(false)
   const [waPeople, setWaPeople] = useState<Array<{ id: string; name: string; whatsapp: string | null }>>([])
 
+  const canEditScore = match.status === "in_progress"
+  const displayStatus =
+    match.status === "scheduled" ? "upcoming" : match.status === "in_progress" ? "ongoing" : "finished"
+  const badgeVariant =
+    match.status === "completed" ? "secondary" : match.status === "in_progress" ? "default" : "outline"
+
   const handleUpdateScore = async () => {
     setIsUpdating(true)
 
@@ -72,8 +78,6 @@ export function MatchCard({
           team1_score: score1,
           team2_score: score2,
           winner_id: winnerId,
-          status: "completed",
-          // calendar will be updated too, but time likely unchanged
         }),
       })
 
@@ -91,6 +95,62 @@ export function MatchCard({
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ scheduled_at: iso, status: match.status }),
+      })
+      router.refresh()
+    } finally {
+      setIsUpdating(false)
+    }
+  }
+
+  const handleStartMatch = async () => {
+    setIsUpdating(true)
+    try {
+      await fetch(`/api/matches/${match.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "in_progress" }),
+      })
+      router.refresh()
+    } finally {
+      setIsUpdating(false)
+    }
+  }
+
+  const handleFinishMatch = async () => {
+    setIsUpdating(true)
+    try {
+      await fetch(`/api/matches/${match.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "completed" }),
+      })
+      router.refresh()
+    } finally {
+      setIsUpdating(false)
+    }
+  }
+
+  const handleSetUpcoming = async () => {
+    setIsUpdating(true)
+    try {
+      await fetch(`/api/matches/${match.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "scheduled", team1_score: null, team2_score: null, winner_id: null }),
+      })
+      router.refresh()
+    } finally {
+      setIsUpdating(false)
+    }
+  }
+
+  const handleSetOngoing = async () => {
+    setIsUpdating(true)
+    try {
+      await fetch(`/api/matches/${match.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "in_progress" }),
       })
       router.refresh()
     } finally {
@@ -125,7 +185,7 @@ export function MatchCard({
     <Card className={`bg-card/20 border-border ${isNextMatch ? "ring-2 ring-primary/60 bg-primary/10" : ""}`}>
       <CardContent className="p-4">
         <div className="flex items-center justify-between mb-3">
-          <Badge variant={match.status === "completed" ? "secondary" : "outline"}>{match.status}</Badge>
+          <Badge variant={badgeVariant}>{displayStatus}</Badge>
         </div>
 
         <div className="space-y-2">
@@ -137,6 +197,7 @@ export function MatchCard({
               onChange={(e) => setTeam1Score(e.target.value)}
               className="w-16 text-center bg-background/50"
               min="0"
+              disabled={!canEditScore}
             />
           </div>
 
@@ -148,6 +209,7 @@ export function MatchCard({
               onChange={(e) => setTeam2Score(e.target.value)}
               className="w-16 text-center bg-background/50"
               min="0"
+              disabled={!canEditScore}
             />
           </div>
         </div>
@@ -167,7 +229,47 @@ export function MatchCard({
           </div>
         </div>
 
-        <Button onClick={handleUpdateScore} disabled={isUpdating} size="sm" className="w-full mt-3">
+        {match.status === "scheduled" && (
+          <Button onClick={handleStartMatch} disabled={isUpdating} size="sm" className="w-full mt-3">
+            {isUpdating ? "Starting..." : "Start Match"}
+          </Button>
+        )}
+
+        {match.status === "in_progress" && (
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <Button onClick={handleFinishMatch} disabled={isUpdating} size="sm" className="w-full">
+              {isUpdating ? "Finishing..." : "Finish Match"}
+            </Button>
+            <Button
+              onClick={handleSetUpcoming}
+              disabled={isUpdating}
+              size="sm"
+              variant="outline"
+              className="w-full bg-transparent"
+            >
+              {isUpdating ? "Reverting..." : "Set Upcoming"}
+            </Button>
+          </div>
+        )}
+
+        {match.status === "completed" && (
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <Button onClick={handleSetOngoing} disabled={isUpdating} size="sm" className="w-full">
+              {isUpdating ? "Reverting..." : "Set Ongoing"}
+            </Button>
+            <Button
+              onClick={handleSetUpcoming}
+              disabled={isUpdating}
+              size="sm"
+              variant="outline"
+              className="w-full bg-transparent"
+            >
+              {isUpdating ? "Reverting..." : "Set Upcoming"}
+            </Button>
+          </div>
+        )}
+
+        <Button onClick={handleUpdateScore} disabled={isUpdating || !canEditScore} size="sm" className="w-full mt-3">
           {isUpdating ? "Updating..." : "Update Score"}
         </Button>
 

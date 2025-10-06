@@ -14,6 +14,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { LogOut, UserIcon, LayoutDashboard } from "lucide-react"
+import { ThemeToggle } from "@/components/theme-toggle"
 
 interface PublicNavProps {
   user: User | null
@@ -59,6 +60,7 @@ export function PublicNav({ user }: PublicNavProps) {
         </div>
 
         <div className="flex items-center gap-2">
+          <ThemeToggle />
           {user ? (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
