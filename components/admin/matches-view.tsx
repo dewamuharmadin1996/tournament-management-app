@@ -56,6 +56,7 @@ export function MatchesView({
     Array<{ id: string; name: string; whatsapp: string | null; team_id: string }>
   >([]) // store people with team
   const [showUpcomingOnly, setShowUpcomingOnly] = useState(false) // toggle to hide completed matches
+  const [showOngoingOnly, setShowOngoingOnly] = useState(false) // toggle for ongoing-only filter
   const router = useRouter()
   const supabase = createClient()
 
@@ -232,7 +233,11 @@ export function MatchesView({
     return `${header}\n${lines.join("\n")}`.trim()
   }
 
-  const visibleMatches = showUpcomingOnly ? matches.filter((m) => m.status !== "completed") : matches
+  const visibleMatches = showOngoingOnly
+    ? matches.filter((m) => m.status === "in_progress")
+    : showUpcomingOnly
+      ? matches.filter((m) => m.status !== "completed")
+      : matches
 
   const now = Date.now()
   const nonCompleted = visibleMatches.filter((m) => m.status !== "completed")
@@ -262,9 +267,33 @@ export function MatchesView({
           <CardTitle>Matches</CardTitle>
           <div className="flex items-center gap-2">
             {matches.length > 0 && (
-              <Button variant="outline" onClick={() => setShowUpcomingOnly((v) => !v)}>
-                {showUpcomingOnly ? "Show All" : "Upcoming Only"}
-              </Button>
+              <>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setShowUpcomingOnly((v) => {
+                      const next = !v
+                      if (next) setShowOngoingOnly(false)
+                      return next
+                    })
+                  }}
+                >
+                  {showUpcomingOnly ? "Show All" : "Upcoming Only"}
+                </Button>
+
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setShowOngoingOnly((v) => {
+                      const next = !v
+                      if (next) setShowUpcomingOnly(false)
+                      return next
+                    })
+                  }}
+                >
+                  {showOngoingOnly ? "Show All" : "Ongoing Only"}
+                </Button>
+              </>
             )}
             {matches.length === 0 && seasonTeams.length >= 2 && (
               <Button onClick={handleGenerateMatches} disabled={isGenerating}>
